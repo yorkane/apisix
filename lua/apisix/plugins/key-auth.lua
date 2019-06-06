@@ -57,7 +57,7 @@ function _M.access(conf, ctx)
     end
 
     ctx.consumer_id = consumer_id
-    core.log.warn("hit key-auth access")
+    core.log.info("hit key-auth access")
 end
 
 
