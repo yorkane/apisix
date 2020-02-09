@@ -1,6 +1,23 @@
+--
+-- Licensed to the Apache Software Foundation (ASF) under one or more
+-- contributor license agreements.  See the NOTICE file distributed with
+-- this work for additional information regarding copyright ownership.
+-- The ASF licenses this file to You under the Apache License, Version 2.0
+-- (the "License"); you may not use this file except in compliance with
+-- the License.  You may obtain a copy of the License at
+--
+--     http://www.apache.org/licenses/LICENSE-2.0
+--
+-- Unless required by applicable law or agreed to in writing, software
+-- distributed under the License is distributed on an "AS IS" BASIS,
+-- WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+-- See the License for the specific language governing permissions and
+-- limitations under the License.
+--
 local core = require("apisix.core")
 local get_routes = require("apisix.router").http_routes
 local schema_plugin = require("apisix.admin.plugins").check_schema
+local upstreams = require("apisix.admin.upstreams")
 local tostring = tostring
 local ipairs = ipairs
 local tonumber = tonumber
@@ -40,6 +57,14 @@ local function check_conf(id, conf, need_id)
 
     if need_id and not tonumber(id) then
         return nil, {error_msg = "wrong type of service id"}
+    end
+
+    local upstream_conf = conf.upstream
+    if upstream_conf then
+        local ok, err = upstreams.check_upstream_conf(upstream_conf)
+        if not ok then
+            return nil, {error_msg = err}
+        end
     end
 
     local upstream_id = conf.upstream_id

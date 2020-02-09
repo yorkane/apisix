@@ -1,4 +1,24 @@
-[English](prometheus.md) 
+<!--
+#
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+-->
+
+[English](prometheus.md)
+
 # prometheus
 
 此插件是提供符合prometheus数据格式的监控指标数据。
@@ -62,7 +82,13 @@ scrape_configs:
 
 ### Grafana 面板
 
-.插件导出的指标可以在 Grafana 进行图形化绘制显示。https://grafana.com/dashboards/7424
+插件导出的指标可以在 Grafana 进行图形化绘制显示。
+
+![](../../doc/images/plugin/grafana_1.png)
+
+![](../../doc/images/plugin/grafana_2.png)
+
+![](../../doc/images/plugin/grafana_3.png)
 
 ### 可有的指标
 

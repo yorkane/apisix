@@ -1,3 +1,19 @@
+--
+-- Licensed to the Apache Software Foundation (ASF) under one or more
+-- contributor license agreements.  See the NOTICE file distributed with
+-- this work for additional information regarding copyright ownership.
+-- The ASF licenses this file to You under the Apache License, Version 2.0
+-- (the "License"); you may not use this file except in compliance with
+-- the License.  You may obtain a copy of the License at
+--
+--     http://www.apache.org/licenses/LICENSE-2.0
+--
+-- Unless required by applicable law or agreed to in writing, software
+-- distributed under the License is distributed on an "AS IS" BASIS,
+-- WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+-- See the License for the specific language governing permissions and
+-- limitations under the License.
+--
 local core      = require("apisix.core")
 local balancer  = require("ngx.balancer")
 local ngx_exit  = ngx.exit
@@ -128,13 +144,13 @@ function _M.preread(conf, ctx)
     end
 
     if res.protocol and res.protocol ~= conf.protocol_name then
-        core.log.error("expect protocol name: ", conf.protocol_name
+        core.log.error("expect protocol name: ", conf.protocol_name,
                        ", but got ", res.protocol)
         return ngx_exit(1)
     end
 
     if res.protocol_ver and res.protocol_ver ~= conf.protocol_level then
-        core.log.error("expect protocol level: ", conf.protocol_level
+        core.log.error("expect protocol level: ", conf.protocol_level,
                        ", but got ", res.protocol_ver)
         return ngx_exit(1)
     end

@@ -1,3 +1,22 @@
+<!--
+#
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+-->
+
 ## 目录
 - [**APISIX**](#apisix)
 - [**APISIX Config**](#apisix-config)
@@ -172,7 +191,7 @@ curl http://127.0.0.1:9080/apisix/admin/routes/102 -X PUT -d '
 优先级更高。
 
 一个插件在一次请求中只会执行一次，即使被同时绑定到多个不同对象中（比如 Route 或 Service）。
-插件运行先后顺序是根据插件自身的优先级来决定的，例如：[example-plugin](../doc/plugins/example-plugin.lua#L16)。
+插件运行先后顺序是根据插件自身的优先级来决定的，例如：[example-plugin](../lua/apisix/plugins/example-plugin.lua#L37)。
 
 插件配置作为 Route 或 Service 的一部分提交的，放到 `plugins` 下。它内部是使用插件
 名字作为哈希的 key 来保存不同插件的配置项。
@@ -218,9 +237,11 @@ APISIX 的 Upstream 除了基本的复杂均衡算法选择外，还支持对上
 |-------         |-----|------|
 |type            |必需|`roundrobin` 支持权重的负载，`chash` 一致性哈希，两者是二选一的|
 |nodes           |必需|哈希表，内部元素的 key 是上游机器地址列表，格式为`地址 + Port`，其中地址部分可以是 IP 也可以是域名，比如 `192.168.1.100:80`、`foo.com:80`等。value 则是节点的权重，特别的，当权重值为 `0` 有特殊含义，通常代表该上游节点失效，永远不希望被选中。|
-|key             |必需|该选项只有类型是 `chash` 才有效。根据 `key` 来查找对应的 node `id`，相同的 `key` 在同一个对象中，永远返回相同 id|
+|hash_on         |可选|该选项只有 `type` 是 `chash` 才有效。`hash_on` 支持的类型有 `vars`（Nginx内置变量），`header`（自定义header），`cookie`，`consumer`，默认值为 `vars`|
+|key             |必需|该选项只有 `type` 是 `chash` 才有效，需要配合 `hash_on` 来使用，通过 `hash_on` 和 `key` 来查找对应的 node `id`。`hash_on` 设为 `vars` 时，`key` 为必传参数，目前支持的 Nginx 内置变量有 `uri, server_name, server_addr, request_uri, remote_port, remote_addr, query_string, host, hostname, arg_***`，其中 `arg_***` 是来自URL的请求参数，[Nginx 变量列表](http://nginx.org/en/docs/varindex.html)；`hash_on` 设为 `header` 时, `key` 为必传参数，自定义的 `header name`；`hash_on` 设为 `cookie` 时, `key` 为必传参数， 自定义的 `cookie name`；`hash_on` 设为 `consumer` 时，`key` 不需要设置，为空，此时哈希算法采用的 `key` 为认证通过的 `consumer_id`。 如果指定的 `hash_on` 和 `key` 获取不到值时，默认取 `remote_addr`|
 |checks          |可选|配置健康检查的参数，详细可参考[health-check](health-check.md)|
-|retries         |可选|使用底层的 Nginx 重试机制将请求传递给下一个上游，默认不启用重试机制|
+|retries         |可选|使用底层的 Nginx 重试机制将请求传递给下一个上游，默认 APISIX 会启用重试机制，根据配置的后端节点个数设置重试次数，如果此参数显式被设置将会覆盖系统默认设置的重试次数。|
+|enable_websocket|可选| 是否启用 `websocket`（布尔值），默认不启用|
 
 创建上游对象用例：
 
@@ -239,6 +260,7 @@ curl http://127.0.0.1:9080/apisix/admin/upstreams/2 -X PUT -d '
 {
     "type": "chash",
     "key": "remote_addr",
+    "enable_websocket": true,
     "nodes": {
         "127.0.0.1:80": 1,
         "foo.com:80": 2
@@ -315,8 +337,90 @@ curl http://127.0.0.1:9080/apisix/admin/routes/1 -X PUT -d '
     }
 }'
 ```
-
 更多细节可以参考[健康检查的文档](health-check.md)。
+
+下面是几个使用不同`hash_on`类型的配置示例：
+##### Consumer
+创建一个consumer对象:
+```shell
+curl http://127.0.0.1:9080/apisix/admin/consumers -X PUT -d `
+{
+    "username": "jack",
+    "plugins": {
+    "key-auth": {
+           "key": "auth-jack"
+        }
+    }
+}`
+```
+新建路由，打开`key-auth`插件认证，`upstream`的`hash_on`类型为`consumer`：
+```shell
+curl http://127.0.0.1:9080/apisix/admin/routes/1 -X PUT -d '
+{
+    "plugins": {
+        "key-auth": {}
+    },
+    "upstream": {
+        "nodes": {
+            "127.0.0.1:1980": 1,
+            "127.0.0.1:1981": 1
+        },
+        "type": "chash",
+        "hash_on": "consumer"
+    },
+    "uri": "/server_port"
+}'
+```
+测试请求，认证通过后的`consumer_id`将作为负载均衡哈希算法的哈希值：
+```shell
+curl http://127.0.0.1:9080/server_port -H "apikey: auth-jack"
+```
+
+##### Cookie
+新建路由和`Upstream`，`hash_on`类型为`cookie`：
+```shell
+curl http://127.0.0.1:9080/apisix/admin/routes/1 -X PUT -d '
+{
+    "uri": "/hash_on_cookie",
+    "upstream": {
+        "key": "sid",
+        "type ": "chash",
+        "hash_on ": "cookie",
+        "nodes ": {
+            "127.0.0.1:1980": 1,
+            "127.0.0.1:1981": 1
+        }
+    }
+}'
+```
+
+客户端请求携带`Cookie`：
+```shell
+ curl http://127.0.0.1:9080/hash_on_cookie -H "Cookie: sid=3c183a30cffcda1408daf1c61d47b274"
+```
+
+##### Header
+新建路由和`Upstream`，`hash_on`类型为`header`， `key`为`content-type`：
+```shell
+curl http://127.0.0.1:9080/apisix/admin/routes/1 -X PUT -d '
+{
+    "uri": "/hash_on_header",
+    "upstream": {
+        "key": "content-type",
+        "type ": "chash",
+        "hash_on ": "header",
+        "nodes ": {
+            "127.0.0.1:1980": 1,
+            "127.0.0.1:1981": 1
+        }
+    }
+}'
+```
+
+客户端请求携带`content-type`的`header`：
+```shell
+ curl http://127.0.0.1:9080/hash_on_header -H "Content-Type: application/json"
+```
 
 [返回目录](#目录)
 
@@ -328,17 +432,15 @@ APISIX 区别于其他 API 网关的一大特点是允许用户选择不同 Rout
 在本地配置 `conf/config.yaml` 中设置最符合自身业务需求的路由。
 
 * `apisix.router.http`: HTTP 请求路由。
-    * `radixtree_uri`: （默认）只使用 `uri` 作为主索引。基于 `radix tree` 引擎，支持全量和深前缀匹配，更多见 [如何使用 router-radixtree](router-radixtree.md)。
+    * `radixtree_uri`: （默认）只使用 `uri` 作为主索引。基于 `radixtree` 引擎，支持全量和深前缀匹配，更多见 [如何使用 router-radixtree](router-radixtree.md)。
         * `绝对匹配`：完整匹配给定的 `uri` ，比如 `/foo/bar`，`/foo/glo`。
         * `前缀匹配`：末尾使用 `*` 代表给定的 `uri` 是前缀匹配。比如 `/foo*`，则允许匹配 `/foo/`、`/foo/a`和`/foo/b`等。
         * `匹配优先级`：优先尝试绝对匹配，若无法命中绝对匹配，再尝试前缀匹配。
         * `任意过滤属性`：允许指定任何 Ningx 内置变量作为过滤条件，比如 uri 请求参数、请求头、cookie 等。
-    * `r3_uri`: 只使用 `uri` 作为主索引（基于 r3 引擎）。基于 `r3` 的 trie tree 是支持正则匹配的，比如 `/foo/{:\w+}/{:\w+}`，更多见 [如何使用 router-r3](router-r3.md)。
-    * `r3_host_uri`: 使用 `host + uri` 作为主索引（基于 r3 引擎）,对当前请求会同时匹配 host 和 uri。
+    * `radixtree_host_uri`: 使用 `host + uri` 作为主索引（基于 `radixtree` 引擎），对当前请求会同时匹配 host 和 uri，支持的匹配条件与 `radixtree_uri` 基本一致。
 
 * `apisix.router.ssl`: SSL 加载匹配路由。
     * `radixtree_sni`: （默认）使用 `SNI` (Server Name Indication) 作为主索引（基于 radixtree 引擎）。
-    * `r3_sni`: 使用 `SNI` (Server Name Indication) 作为主索引（基于 r3 引擎）。
 
 [返回目录](#目录)
 
@@ -422,11 +524,11 @@ HTTP/1.1 503 Service Temporarily Unavailable
 
 ## Debug mode
 
-开启调试模式后，会在请求应答时，输出更多的内部信息，比如加载了哪些插件等。
+### 基本调试模式
 
-设置 `conf/config.yaml` 中的 `apisix.enable_debug` 为 `true`，即可开启调试模式。
+设置 `conf/config.yaml` 中的 `apisix.enable_debug` 为 `true`，即可开启基本调试模式。
 
-比如对 `/hello` 开启了 `limit-conn`和`limit-count`插件，这时候应答头中会有 `Apisix-Plugins: limit-conn, limit-count` 出现。
+比如对 `/hello` 开启了 `limit-conn`和`limit-count`插件，这时候应答头中会有 `Apisix-Plugins: limit-conn, limit-count`。
 
 ```shell
 $ curl http://127.0.0.1:1984/hello -i
@@ -440,6 +542,42 @@ X-RateLimit-Remaining: 1
 Server: openresty
 
 hello world
+```
+
+### 高级调试模式
+
+设置 `conf/debug.yaml` 中的选项，开启高级调试模式。由于 APISIX 服务启动后是每秒定期检查该文件，
+当可以正常读取到 `#END` 结尾时，才认为文件处于写完关闭状态。
+
+根据文件最后修改时间判断文件内容是否有变化，如有变化则重新加载，如没变化则跳过本次检查。
+所以高级调试模式的开启、关闭都是热更新方式完成。
+
+|名字|可选项|说明|默认值|
+|----|-----|---------|---|
+|hook_conf.enable|必选项|是否开启 hook 追踪调试。开启后将打印指定模块方法的请求参数或返回值|false|
+|hook_conf.name|必选项|开启 hook 追踪调试的模块列表名称||
+|hook_conf.log_level|必选项|打印请求参数和返回值的日志级别|warn|
+|hook_conf.is_print_input_args|必选项|是否打印输入参数|true|
+|hook_conf.is_print_return_value|必选项|是否打印返回值|true|
+
+请看下面示例：
+
+```yaml
+hook_conf:
+  enable: false                 # 是否开启 hook 追踪调试
+  name: hook_phase              # 开启 hook 追踪调试的模块列表名称
+  log_level: warn               # 日志级别
+  is_print_input_args: true     # 是否打印输入参数
+  is_print_return_value: true   # 是否打印返回值
+
+hook_phase:                     # 模块函数列表，名字：hook_phase
+  apisix:                       # 引用的模块名称
+    - http_access_phase         # 函数名：数组
+    - http_header_filter_phase
+    - http_body_filter_phase
+    - http_log_phase
+
+#END
 ```
 
 [返回目录](#目录)

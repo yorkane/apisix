@@ -1,5 +1,19 @@
--- Copyright (C) Yuansheng Wang
-
+--
+-- Licensed to the Apache Software Foundation (ASF) under one or more
+-- contributor license agreements.  See the NOTICE file distributed with
+-- this work for additional information regarding copyright ownership.
+-- The ASF licenses this file to You under the Apache License, Version 2.0
+-- (the "License"); you may not use this file except in compliance with
+-- the License.  You may obtain a copy of the License at
+--
+--     http://www.apache.org/licenses/LICENSE-2.0
+--
+-- Unless required by applicable law or agreed to in writing, software
+-- distributed under the License is distributed on an "AS IS" BASIS,
+-- WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+-- See the License for the specific language governing permissions and
+-- limitations under the License.
+--
 local require       = require
 local core          = require("apisix.core")
 local plugin        = require("apisix.plugin")
@@ -11,7 +25,6 @@ local ipmatcher     = require("resty.ipmatcher")
 local ngx           = ngx
 local get_method    = ngx.req.get_method
 local ngx_exit      = ngx.exit
-local ngx_ERROR     = ngx.ERROR
 local math          = math
 local error         = error
 local ipairs        = ipairs
@@ -70,6 +83,8 @@ function _M.http_init_worker()
     if core.config == require("apisix.core.config_yaml") then
         core.config.init_worker()
     end
+
+    require("apisix.debug").init_worker()
 end
 
 
@@ -140,12 +155,11 @@ function _M.http_ssl_phase()
         ngx_ctx.api_ctx = api_ctx
     end
 
-    local ok, err = router.router_ssl.match(api_ctx)
+    local ok, err = router.router_ssl.match_and_set(api_ctx)
     if not ok then
         if err then
-            core.log.error("failed to fetch ssl config: ", err)
+            core.log.warn("failed to fetch ssl config: ", err)
         end
-        return ngx_exit(ngx_ERROR)
     end
 end
 
@@ -254,7 +268,7 @@ function _M.http_access_phase()
 
     local route = api_ctx.matched_route
     if not route then
-        return core.response.exit(404)
+        return core.response.exit(404, {error_msg = "failed to match any routes"})
     end
 
     if route.value.service_protocol == "grpc" then
@@ -290,6 +304,7 @@ function _M.http_access_phase()
         api_ctx.conf_id = route.value.id
     end
 
+    local enable_websocket
     local up_id = route.value.upstream_id
     if up_id then
         local upstreams_etcd = core.config.fetch_created_obj("/upstreams")
@@ -299,11 +314,26 @@ function _M.http_access_phase()
                 parsed_domain(upstream, api_ctx.conf_version,
                               parse_domain_in_up, upstream)
             end
+
+            if upstream.value.enable_websocket then
+                enable_websocket = true
+            end
         end
 
-    elseif route.has_domain then
-        route = parsed_domain(route, api_ctx.conf_version,
-                              parse_domain_in_route, route)
+    else
+        if route.has_domain then
+            route = parsed_domain(route, api_ctx.conf_version,
+                                  parse_domain_in_route, route)
+        end
+
+        if route.value.upstream and route.value.upstream.enable_websocket then
+            enable_websocket = true
+        end
+    end
+
+    if enable_websocket then
+        api_ctx.var.upstream_upgrade    = api_ctx.var.http_upgrade
+        api_ctx.var.upstream_connection = api_ctx.var.http_connection
     end
 
     local plugins = core.tablepool.fetch("plugins", 32, 0)
@@ -432,6 +462,29 @@ function _M.http_balancer_phase()
     load_balancer(api_ctx.matched_route, api_ctx)
 end
 
+local function cors_admin()
+    local local_conf = core.config.local_conf()
+    if local_conf.apisix and not local_conf.apisix.enable_admin_cors then
+        return
+    end
+
+    local method = get_method()
+    if method == "OPTIONS" then
+        core.response.set_header("Access-Control-Allow-Origin", "*",
+                                "Access-Control-Allow-Methods", "POST, GET, PUT, OPTIONS, DELETE, PATCH",
+                                "Access-Control-Max-Age", "3600",
+                                "Access-Control-Allow-Headers", "*",
+                                "Access-Control-Allow-Credentials", "true",
+                                "Content-Length", "0",
+                                "Content-Type", "text/plain")
+        ngx_exit(200)
+    end
+
+    core.response.set_header("Access-Control-Allow-Origin", "*",
+                            "Access-Control-Allow-Credentials", "true",
+                            "Access-Control-Expose-Headers", "*",
+                            "Access-Control-Max-Age", "3600")
+end
 
 do
     local router
@@ -440,6 +493,9 @@ function _M.http_admin()
     if not router then
         router = admin_init.get()
     end
+
+    -- add cors rsp header
+    cors_admin()
 
     -- core.log.info("uri: ", get_var("uri"), " method: ", get_method())
     local ok = router:dispatch(get_var("uri"), {method = get_method()})

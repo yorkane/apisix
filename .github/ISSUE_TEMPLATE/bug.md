@@ -7,26 +7,21 @@ assignees: ''
 
 ---
 
-# Issue description
+### Issue description
 
 
-
-# Environment
+### Environment
 
 * apisix version (cmd: `apisix version`):
 * OS:
 
-# Minimal test code / Steps to reproduce the issue
-
-```shell
-# your steps
+### Minimal test code / Steps to reproduce the issue
 1.
 2.
 3.
-```
 
-# What's the actual result? (include assertion message & call stack if applicable)
-
+### What's the actual result? (including assertion message & call stack if applicable)
 
 
-# What's the expected result?
+
+### What's the expected result?

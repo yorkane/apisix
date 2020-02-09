@@ -1,3 +1,22 @@
+<!--
+#
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+-->
+
 [English](jwt-auth.md)
 
 # 目录
@@ -39,12 +58,10 @@ curl http://127.0.0.1:9080/apisix/admin/consumers -X PUT -d '
     }
 }'
 ```
-
-你可以访问 Dashboard `http://127.0.0.1:9080/apisix/dashboard/` 并通过 Web 控制台来增加一个 Consumer：
-
+你可以使用浏览器打开 dashboard：`http://127.0.0.1:9080/apisix/dashboard/`，通过 web 界面来完成上面的操作，先增加一个 consumer：
 ![](../images/plugin/jwt-auth-1.png)
 
-然后在 Consumer 页面中添加 jwt-auth 插件：
+然后在 consumer 页面中添加 jwt-auth 插件：
 ![](../images/plugin/jwt-auth-2.png)
 
 2. 创建 Route 或 Service 对象，并开启 `jwt-auth` 插件。
@@ -71,7 +88,7 @@ curl http://127.0.0.1:9080/apisix/admin/routes/1 -X PUT -d '
 #### 首先进行登录获取 `jwt-auth` token:
 
 ```shell
-$ curl http://127.0.0.2:9080/apisix/plugin/jwt/sign?key=consumer-key -i
+$ curl http://127.0.0.2:9080/apisix/plugin/jwt/sign?key=user-key -i
 HTTP/1.1 200 OK
 Date: Wed, 24 Jul 2019 10:33:31 GMT
 Content-Type: text/plain

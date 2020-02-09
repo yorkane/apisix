@@ -1,8 +1,24 @@
+--
+-- Licensed to the Apache Software Foundation (ASF) under one or more
+-- contributor license agreements.  See the NOTICE file distributed with
+-- this work for additional information regarding copyright ownership.
+-- The ASF licenses this file to You under the Apache License, Version 2.0
+-- (the "License"); you may not use this file except in compliance with
+-- the License.  You may obtain a copy of the License at
+--
+--     http://www.apache.org/licenses/LICENSE-2.0
+--
+-- Unless required by applicable law or agreed to in writing, software
+-- distributed under the License is distributed on an "AS IS" BASIS,
+-- WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+-- See the License for the specific language governing permissions and
+-- limitations under the License.
+--
 local schema    = require('apisix.core.schema')
 local setmetatable = setmetatable
+local error     = error
 
-local _M = {version = 0.3}
-setmetatable(_M, {__index = schema})
+local _M = {version = 0.4}
 
 
 local plugins_schema = {
@@ -48,9 +64,6 @@ local remote_addr_def = {
 }
 
 
--- todo: support all options
---   default value: https://github.com/Kong/lua-resty-healthcheck/
---   blob/master/lib/resty/healthcheck.lua#L1121
 local health_checker = {
     type = "object",
     properties = {
@@ -124,6 +137,14 @@ local health_checker = {
                             default = 3
                         }
                     }
+                },
+                req_headers = {
+                  type = "array",
+                  minItems = 1,
+                  items = {
+                      type = "string",
+                      uniqueItems = true,
+                  },
                 }
             }
         },
@@ -195,7 +216,12 @@ local health_checker = {
                 }
             }
         }
-    }
+    },
+    additionalProperties = false,
+    anyOf = {
+        {required = {"active"}},
+        {required = {"active", "passive"}},
+    },
 }
 
 
@@ -233,51 +259,63 @@ local upstream_schema = {
             enum = {"chash", "roundrobin"}
         },
         checks = health_checker,
+        hash_on = {
+            type = "string",
+            default = "vars",
+            enum = {
+              "vars",
+              "header",
+              "cookie",
+              "consumer",
+            },
+        },
         key = {
             description = "the key of chash for dynamic load balancing",
-            type = "string",
-            enum = {"remote_addr"},
-        },
-        desc = {type = "string", maxLength = 256},
-        id = id_schema,
-        scheme = {
-            description = "scheme of upstream",
-            type = "string",
-            enum = {"http", "https"},
-        },
-        host = {
-            description = "host of upstream",
-            type = "string",
-            pattern = host_def_pat,
-        },
-        upgrade = {
-            description = "upgrade header for upstream",
-            type = "string",
-        },
-        connection = {
-            description = "connection header for upstream",
-            type = "string",
-        },
-        uri = {
-            description = "new uri for upstream",
             type = "string",
         },
         enable_websocket = {
             description = "enable websocket for request",
-            type = "boolean",
-        }
+            type        = "boolean"
+        },
+        desc = {type = "string", maxLength = 256},
+        id = id_schema
     },
     required = {"nodes", "type"},
     additionalProperties = false,
 }
 
+-- TODO: add more nginx variable support
+_M.upstream_hash_vars_schema = {
+    type = "string",
+    pattern = [[^((uri|server_name|server_addr|request_uri|remote_port]]
+               .. [[|remote_addr|query_string|host|hostname)]]
+               .. [[|arg_[0-9a-zA-z_-]+)$]],
+}
+
+-- validates header name, cookie name.
+-- a-z, A-Z, 0-9, '_' and '-' are allowed.
+-- when "underscores_in_headers on", header name allow '_'.
+-- http://nginx.org/en/docs/http/ngx_http_core_module.html#underscores_in_headers
+_M.upstream_hash_header_schema = {
+    type = "string",
+    pattern = [[^[a-zA-Z0-9-_]+$]]
+}
 
 
-local route = {
+_M.route = {
     type = "object",
     properties = {
         uri = {type = "string", minLength = 1, maxLength = 4096},
+        uris = {
+            type = "array",
+            items = {
+                description = "HTTP uri",
+                type = "string",
+            },
+            uniqueItems = true,
+        },
         desc = {type = "string", maxLength = 256},
+        priority = {type = "integer", default = 0},
 
         methods = {
             type = "array",
@@ -308,13 +346,18 @@ local route = {
                 type = "array",
                 items = {
                     maxItems = 3,
-                    mixItems = 2,
+                    minItems = 2,
                     anyOf = {
                         {type = "string",},
                         {type = "number",},
                     }
                 }
             }
+        },
+        filter_func = {
+            type = "string",
+            minLength = 10,
+            pattern = [[^function]],
         },
 
         plugins = plugins_schema,
@@ -332,10 +375,13 @@ local route = {
         {required = {"upstream", "uri"}},
         {required = {"upstream_id", "uri"}},
         {required = {"service_id", "uri"}},
+        {required = {"plugins", "uris"}},
+        {required = {"upstream", "uris"}},
+        {required = {"upstream_id", "uris"}},
+        {required = {"service_id", "uris"}},
     },
     additionalProperties = false,
 }
-_M.route = route
 
 
 _M.service = {
@@ -378,10 +424,10 @@ _M.ssl = {
     type = "object",
     properties = {
         cert = {
-            type = "string", minLength = 128, maxLength = 4096
+            type = "string", minLength = 128, maxLength = 64*1024
         },
         key = {
-            type = "string", minLength = 128, maxLength = 4096
+            type = "string", minLength = 128, maxLength = 64*1024
         },
         sni = {
             type = "string",
@@ -397,7 +443,7 @@ _M.proto = {
     type = "object",
     properties = {
         content = {
-            type = "string", minLength = 1, maxLength = 4096
+            type = "string", minLength = 1, maxLength = 1024*1024
         }
     },
     required = {"content"},
@@ -433,6 +479,12 @@ _M.stream_route = {
         plugins = plugins_schema,
     }
 }
+
+
+setmetatable(_M, {
+    __index = schema,
+    __newindex = function() error("no modification allowed") end,
+})
 
 
 return _M

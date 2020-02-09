@@ -1,15 +1,28 @@
+--
+-- Licensed to the Apache Software Foundation (ASF) under one or more
+-- contributor license agreements.  See the NOTICE file distributed with
+-- this work for additional information regarding copyright ownership.
+-- The ASF licenses this file to You under the Apache License, Version 2.0
+-- (the "License"); you may not use this file except in compliance with
+-- the License.  You may obtain a copy of the License at
+--
+--     http://www.apache.org/licenses/LICENSE-2.0
+--
+-- Unless required by applicable law or agreed to in writing, software
+-- distributed under the License is distributed on an "AS IS" BASIS,
+-- WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+-- See the License for the specific language governing permissions and
+-- limitations under the License.
+--
 local healthcheck = require("resty.healthcheck")
 local roundrobin  = require("resty.roundrobin")
 local resty_chash = require("resty.chash")
 local balancer    = require("ngx.balancer")
 local core        = require("apisix.core")
-local sub_str     = string.sub
-local find_str    = string.find
 local error       = error
 local str_char    = string.char
 local str_gsub    = string.gsub
 local pairs       = pairs
-local tonumber    = tonumber
 local tostring    = tostring
 local set_more_tries   = balancer.set_more_tries
 local get_last_failure = balancer.get_last_failure
@@ -34,28 +47,16 @@ local _M = {
 }
 
 
-local function parse_addr(addr)
-    local pos = find_str(addr, ":", 1, true)
-    if not pos then
-        return addr, 80
-    end
-
-    local host = sub_str(addr, 1, pos - 1)
-    local port = sub_str(addr, pos + 1)
-    return host, tonumber(port)
-end
-
-
 local function fetch_health_nodes(upstream, checker)
     if not checker then
         return upstream.nodes
     end
 
     local host = upstream.checks and upstream.checks.host
-    local up_nodes = core.table.new(0, #upstream.nodes)
+    local up_nodes = core.table.new(0, core.table.nkeys(upstream.nodes))
 
     for addr, weight in pairs(upstream.nodes) do
-        local ip, port = parse_addr(addr)
+        local ip, port = core.utils.parse_addr(addr)
         local ok = checker:get_target_status(ip, port, host)
         if ok then
             up_nodes[addr] = weight
@@ -79,7 +80,7 @@ local function create_checker(upstream, healthcheck_parent)
     })
 
     for addr, weight in pairs(upstream.nodes) do
-        local ip, port = parse_addr(addr)
+        local ip, port = core.utils.parse_addr(addr)
         local ok, err = checker:add_target(ip, port, upstream.checks.host)
         if not ok then
             core.log.error("failed to add new health check target: ", addr,
@@ -121,6 +122,33 @@ local function fetch_healthchecker(upstream, healthcheck_parent, version)
 end
 
 
+local function fetch_chash_hash_key(ctx, upstream)
+    local key = upstream.key
+    local hash_on = upstream.hash_on or "vars"
+    local chash_key
+
+    if hash_on == "consumer" then
+        chash_key = ctx.consumer_id
+    elseif hash_on == "vars" then
+        chash_key = ctx.var[key]
+    elseif hash_on == "header" then
+        chash_key = ctx.var["http_" .. key]
+    elseif hash_on == "cookie" then
+        chash_key = ctx.var["cookie_" .. key]
+    end
+
+    if not chash_key then
+        chash_key = ctx.var["remote_addr"]
+        core.log.warn("chash_key fetch is nil, use default chash_key remote_addr: ", chash_key)
+    end
+    core.log.info("upstream key: ", key)
+    core.log.info("hash_on: ", hash_on)
+    core.log.info("chash_key: ", core.json.delay_encode(chash_key))
+
+    return chash_key
+end
+
+
 local function create_server_picker(upstream, checker)
     if upstream.type == "roundrobin" then
         local up_nodes = fetch_health_nodes(upstream, checker)
@@ -150,11 +178,11 @@ local function create_server_picker(upstream, checker)
         end
 
         local picker = resty_chash:new(nodes)
-        local key = upstream.key
         return {
             upstream = upstream,
             get = function (ctx)
-                local id = picker:find(ctx.var[key])
+                local chash_key = fetch_chash_hash_key(ctx, upstream)
+                local id = picker:find(chash_key)
                 -- core.log.warn("chash id: ", id, " val: ", servers[id])
                 return servers[id]
             end
@@ -202,28 +230,31 @@ local function pick_server(route, ctx)
     end
 
     local checker = fetch_healthchecker(up_conf, healthcheck_parent, version)
-    local retries = up_conf.retries
-    if retries and retries > 0 then
-        ctx.balancer_try_count = (ctx.balancer_try_count or 0) + 1
-        if checker and ctx.balancer_try_count > 1 then
-            local state, code = get_last_failure()
-            if state == "failed" then
-                if code == 504 then
-                    checker:report_timeout(ctx.balancer_ip, ctx.balancer_port,
-                                           up_conf.checks.host)
-                else
-                    checker:report_tcp_failure(ctx.balancer_ip,
-                        ctx.balancer_port, up_conf.checks.host)
-                end
 
+    ctx.balancer_try_count = (ctx.balancer_try_count or 0) + 1
+    if checker and ctx.balancer_try_count > 1 then
+        local state, code = get_last_failure()
+        if state == "failed" then
+            if code == 504 then
+                checker:report_timeout(ctx.balancer_ip, ctx.balancer_port,
+                                       up_conf.checks.host)
             else
-                checker:report_http_status(ctx.balancer_ip, ctx.balancer_port,
-                                           up_conf.checks.host, code)
+                checker:report_tcp_failure(ctx.balancer_ip,
+                    ctx.balancer_port, up_conf.checks.host)
             end
-        end
 
-        if ctx.balancer_try_count == 1 then
+        else
+            checker:report_http_status(ctx.balancer_ip, ctx.balancer_port,
+                                       up_conf.checks.host, code)
+        end
+    end
+
+    if ctx.balancer_try_count == 1 then
+        local retries = up_conf.retries
+        if retries and retries > 0 then
             set_more_tries(retries)
+        else
+            set_more_tries(core.table.nkeys(up_conf.nodes))
         end
     end
 
@@ -239,7 +270,8 @@ local function pick_server(route, ctx)
 
     local server, err = server_picker.get(ctx)
     if not server then
-        return nil, nil, "failed to find valid upstream server" .. err
+        err = err or "no valid upstream node"
+        return nil, nil, "failed to find valid upstream server, " .. err
     end
 
     if up_conf.timeout then
@@ -251,7 +283,7 @@ local function pick_server(route, ctx)
         end
     end
 
-    local ip, port, err = parse_addr(server)
+    local ip, port, err = core.utils.parse_addr(server)
     ctx.balancer_ip = ip
     ctx.balancer_port = port
 

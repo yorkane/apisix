@@ -46,6 +46,7 @@ t/servroot
 go
 \.*
 conf/apisix.uid
+conf/nginx.conf
 deps
 scgi_temp
 uwsgi_temp
@@ -53,3 +54,8 @@ proxy_temp
 fastcgi_temp
 client_body_temp
 utils/lj-releng
+.idea/
+*.iml
+
+# .travis
+!.travis/*.sh
