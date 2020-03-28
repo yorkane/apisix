@@ -53,17 +53,22 @@ script() {
     # install APISIX by luarocks
     sudo luarocks install rockspec/apisix-master-0.rockspec
 
+    # show install files
+    luarocks show apisix
+
     sudo PATH=$PATH apisix help
     sudo PATH=$PATH apisix init
     sudo PATH=$PATH apisix start
     sudo PATH=$PATH apisix stop
 
-    # make init
-    # 'make init' operates scripts and related configuration files in the current directory
-    # The 'apisix' command is a command in the /usr/local/apisix,
-    # and the configuration file for the operation is in the /usr/local/apisix/conf
-    sudo PATH=$PATH make init
-    sudo PATH=$PATH bash .travis/check-nginxconf.sh
+    # apisix cli test
+    sudo PATH=$PATH .travis/apisix_cli_test.sh
+
+    cat /usr/local/apisix/logs/error.log | grep '\[error\]' > /tmp/error.log | true
+    if [ -s /tmp/error.log ]; then
+        echo "=====found error log====="
+        cat /usr/local/apisix/logs/error.log
+    fi
 
     sudo luarocks remove rockspec/apisix-master-0.rockspec
 }

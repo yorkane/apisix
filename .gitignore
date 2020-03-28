@@ -44,7 +44,6 @@ luac.out
 *.pid
 t/servroot
 go
-\.*
 conf/apisix.uid
 conf/nginx.conf
 deps
@@ -56,6 +55,8 @@ client_body_temp
 utils/lj-releng
 .idea/
 *.iml
+dashboard/
+\.*
 
 # .travis
 !.travis/*.sh
